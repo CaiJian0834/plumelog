@@ -106,8 +106,9 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
                     && !className.equals(runLogMessage.getClassName())) {
                 continue;
             }
+            String errorContent = getErrorContent(runLogMessage.getContent());
             //统计分析
-            statisticAlnalysis(getKey(appName, className), warningRule);
+            statisticAlnalysis(getKey(appName, className), warningRule, errorContent);
         }
     }
 
@@ -118,7 +119,7 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
      * @param key  缓存key
      * @param rule 规则
      */
-    private void statisticAlnalysis(String key, WarningRule rule) {
+    private void statisticAlnalysis(String key, WarningRule rule, String errorContent) {
         String time = redisClient.hget(key, LogMessageConstant.PLUMELOG_MONITOR_KEY_MAP_FILED_TIME);
         if (StringUtils.isEmpty(time)) {
             time=String.valueOf(System.currentTimeMillis());
@@ -129,7 +130,7 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
         if (endTime > System.currentTimeMillis()) {
             Long incr = redisClient.hincrby(key, LogMessageConstant.PLUMELOG_MONITOR_KEY_MAP_FILED_COUNT, 1);
             if (incr >= rule.getErrorCount() && !redisClient.existsKey(key + WARNING_NOTICE)) {
-                earlyWarning(rule, incr, key);
+                earlyWarning(rule, incr, key, errorContent);
                 redisClient.del(key);
             }
         } else {
@@ -164,7 +165,7 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
      * @param count
      * @param key
      */
-    private void earlyWarning(WarningRule rule, long count, String key) {
+    private void earlyWarning(WarningRule rule, long count, String key, String errorContent) {
         PlumeLogMonitorTextMessage plumeLogMonitorTextMessage =
                 new PlumeLogMonitorTextMessage.Builder(rule.getAppName())
                         .className(rule.getClassName())
@@ -172,6 +173,7 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
                         .time(rule.getTime())
                         .count(count)
                         .monitorUrl(getMonitorMessageURL(rule))
+                        .errorContent(errorContent)
                         .build();
         if (!StringUtils.isEmpty(rule.getReceiver())) {
             String[] split = rule.getReceiver().split(",");
@@ -192,7 +194,7 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
             } else {
                 WechatClient.sendToWeChat(plumeLogMonitorTextMessage, rule.getWebhookUrl());
             }
-            sendMesageES(rule, count);
+            sendMesageES(rule, count, errorContent);
         }
         redisClient.setex(warningKey, rule.getTime(), warningKey);
     }
@@ -201,11 +203,12 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
     /**
      * 报警记录加入至ES
      */
-    private void sendMesageES(WarningRule rule, long count) {
+    private void sendMesageES(WarningRule rule, long count, String errorContent) {
         try {
             JSONObject object = (JSONObject) JSONObject.toJSON(rule);
             object.put("count", count);
             object.put("dataTime", System.currentTimeMillis());
+            object.put("errorContent", errorContent);
             elasticLowerClient.insertListComm(Arrays.asList(object.toJSONString()),
                     LogMessageConstant.PLUMELOG_MONITOR_MESSAGE_KEY,
                     LogMessageConstant.ES_TYPE);
@@ -229,4 +232,20 @@ public class PlumeLogMonitorListener implements ApplicationListener<PlumelogMoni
                 .append("&time=").append(startTime).append(",").append(currentTime);
         return builder.toString();
     }
+
+    private String getErrorContent(String content){
+
+        if (content == null) {
+            return "";
+        }
+
+        int length = 200;
+
+        if (content.length() <= length) {
+            return content;
+        }
+
+        return content.substring(0, length);
+    }
+
 }
