@@ -149,13 +149,10 @@ public class RedisClient extends AbstractClient {
         }
     }
 
-    public void set(String key, String value, int seconds) {
+    public void setex(String key, int seconds, String value) {
         Jedis sj = jedisPool.getResource();
         try {
-            Pipeline pl = sj.pipelined();
-            pl.set(key, value);
-            pl.expire(key, seconds);
-            pl.sync();
+            sj.setex(key, seconds, value);
         } finally {
             sj.close();
         }
